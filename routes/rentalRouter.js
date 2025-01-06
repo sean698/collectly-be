@@ -16,6 +16,9 @@ rentalRouter.get("/", async (req, res) => {
       bedrooms,
       page = 1,
       limit = 40,
+      parking,
+      furnished,
+      aircon,
     } = req.query;
     const pageNumber = parseInt(page);
     const limitNumber = parseInt(limit);
@@ -32,6 +35,18 @@ rentalRouter.get("/", async (req, res) => {
 
     if (parsedMaxPrice) {
       query = query.where("price", "<=", parsedMaxPrice);
+    }
+
+    if (parking === "true") {
+      query = query.where("parking", "==", true);
+    }
+
+    if (furnished === "true") {
+      query = query.where("furnished", "==", true);
+    }
+
+    if (aircon === "true") {
+      query = query.where("aircon", "==", true);
     }
 
     if (parsedBedrooms) {
