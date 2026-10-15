@@ -1,9 +1,23 @@
 import { Router } from "express";
 import { Firestore } from "@google-cloud/firestore";
-import { SOURCES } from "../constants.js";
 
 const rentalRouter = Router();
 const db = new Firestore();
+
+const CACHE_TTL_MS = 5 * 60 * 1000;
+let listingsCache = { data: null, timestamp: 0 };
+
+async function getAllListings() {
+  const now = Date.now();
+  if (listingsCache.data && now - listingsCache.timestamp < CACHE_TTL_MS) {
+    return listingsCache.data;
+  }
+
+  const snapshot = await db.collection("rental_listings").get();
+  const data = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  listingsCache = { data, timestamp: now };
+  return data;
+}
 
 rentalRouter.get("/", async (req, res) => {
   try {
@@ -20,6 +34,7 @@ rentalRouter.get("/", async (req, res) => {
       furnished,
       aircon,
     } = req.query;
+
     const pageNumber = parseInt(page);
     const limitNumber = parseInt(limit);
     const parsedMinPrice = parseInt(minPrice);
@@ -27,64 +42,81 @@ rentalRouter.get("/", async (req, res) => {
     const parsedBedrooms = parseInt(bedrooms);
     const offset = (pageNumber - 1) * limitNumber;
 
-    let query = db.collection("rental_listings");
+    const toArray = (value) =>
+      value === undefined ? null : Array.isArray(value) ? value : [value];
+    const locationArray = toArray(locations);
+    const sourceArray = toArray(sources);
+    const houseTypeArray = toArray(houseTypes);
+
+    let listings = await getAllListings();
+
+    const nowMs = Date.now();
+    listings = listings.filter((l) => {
+      if (!l.expiresAt) return true;
+      const expiresMs =
+        typeof l.expiresAt.toMillis === "function"
+          ? l.expiresAt.toMillis()
+          : new Date(l.expiresAt).getTime();
+      return Number.isNaN(expiresMs) || expiresMs > nowMs;
+    });
 
     if (parsedMinPrice) {
-      query = query.where("price", ">=", parsedMinPrice);
+      listings = listings.filter(
+        (l) => typeof l.price === "number" && l.price >= parsedMinPrice
+      );
     }
 
     if (parsedMaxPrice) {
-      query = query.where("price", "<=", parsedMaxPrice);
+      listings = listings.filter(
+        (l) => typeof l.price === "number" && l.price <= parsedMaxPrice
+      );
     }
 
     if (parking === "true") {
-      query = query.where("parking", "==", true);
+      listings = listings.filter((l) => l.parking === true);
     }
 
     if (furnished === "true") {
-      query = query.where("furnished", "==", true);
+      listings = listings.filter((l) => l.furnished === true);
     }
 
     if (aircon === "true") {
-      query = query.where("aircon", "==", true);
+      listings = listings.filter((l) => l.aircon === true);
     }
 
     if (parsedBedrooms) {
       if (parsedBedrooms === 1) {
-        query = query.where("bedrooms", "==", 1);
+        listings = listings.filter((l) => l.bedrooms === 1);
       } else if (parsedBedrooms === 2) {
-        query = query.where("bedrooms", "==", 2);
+        listings = listings.filter((l) => l.bedrooms === 2);
       } else {
-        query = query.where("bedrooms", ">=", 3);
+        listings = listings.filter(
+          (l) => typeof l.bedrooms === "number" && l.bedrooms >= 3
+        );
       }
     }
 
-    if (houseTypes) {
-      const houseTypeArray = Array.isArray(houseTypes)
-        ? houseTypes
-        : [houseTypes];
-      query = query.where("type", "in", houseTypeArray);
+    if (houseTypeArray) {
+      listings = listings.filter((l) => houseTypeArray.includes(l.type));
     }
 
-    if (locations) {
-      const locationArray = Array.isArray(locations) ? locations : [locations];
-      query = query.where("location", "in", locationArray);
+    if (locationArray) {
+      listings = listings.filter((l) => locationArray.includes(l.location));
     }
 
-    if (sources) {
-      const sourceArray = Array.isArray(sources) ? sources : [sources];
-      query = query.where("source", "in", sourceArray);
+    if (sourceArray) {
+      listings = listings.filter((l) => sourceArray.includes(l.source));
     }
 
-    query = query.offset(offset).limit(limitNumber).orderBy("price", "asc");
+    listings.sort((a, b) => {
+      const priceA = typeof a.price === "number" ? a.price : Infinity;
+      const priceB = typeof b.price === "number" ? b.price : Infinity;
+      return priceA - priceB;
+    });
 
-    const snapshot = await query.get();
-    const listings = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const paged = listings.slice(offset, offset + limitNumber);
 
-    res.json(listings);
+    res.json(paged);
   } catch (error) {
     console.error("Error:", error);
     res.status(500).json({ error: error.message });
