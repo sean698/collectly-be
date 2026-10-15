@@ -30,9 +30,6 @@ rentalRouter.get("/", async (req, res) => {
       bedrooms,
       page = 1,
       limit = 40,
-      parking,
-      furnished,
-      aircon,
     } = req.query;
 
     const pageNumber = parseInt(page);
@@ -70,18 +67,6 @@ rentalRouter.get("/", async (req, res) => {
       listings = listings.filter(
         (l) => typeof l.price === "number" && l.price <= parsedMaxPrice
       );
-    }
-
-    if (parking === "true") {
-      listings = listings.filter((l) => l.parking === true);
-    }
-
-    if (furnished === "true") {
-      listings = listings.filter((l) => l.furnished === true);
-    }
-
-    if (aircon === "true") {
-      listings = listings.filter((l) => l.aircon === true);
     }
 
     if (parsedBedrooms) {
